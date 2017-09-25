@@ -78,6 +78,10 @@ int main(int argc, char *argv[])
         if(n < 0){
 			printf("Failed to receive data from the socket %s\n", strerror(errno));
 		}
+		// Add a null-terminator to the message
+		message[n] = '\0';
+		//Remove this!
+		fprintf(stdout, "Received:\n%s\n", message);
 		
 		
 	}
@@ -86,13 +90,20 @@ int main(int argc, char *argv[])
 	// TODO 
 
 	/* PSEUDOCODE PLANNING
+		Our port is: 59442
+		RFC for Http 1.1: https://tools.ietf.org/html/rfc2616
+
 		validate args
 		Find port number from args
 		Connect to client
 		Bind a TCP socket
-
-
-
+		Receive message request/response? from client
+		Parse the header
+			check if persistent
+		Make Get
+		Make Post
+		Make Head
+		Free Memory
 
 		For each request print a single line to a log file that conforms to the format:
 			timestamp : <client ip>:<client port> <request method>
