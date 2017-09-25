@@ -19,8 +19,8 @@
 
 int main(int argc, char *argv[])
 {
-	int sockfd;
-	int connectionFd;
+	int serverFd;
+	int clientFd;
 	int portNo;
 	int isPersistent = TRUE;
 	struct sockaddr_in server, client;
@@ -36,10 +36,9 @@ int main(int argc, char *argv[])
 		portNo = atoi(argv[1]);
 	}
 
-
 	// Create and bind a TCP socket
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	if(sockfd == -1){
+	serverFd = socket(AF_INET, SOCK_STREAM, 0);
+	if(serverFd < 0){
 		printf("Failed to create the socket. %s\n", strerror(errno));
 		return -1;
 	}	
@@ -49,42 +48,51 @@ int main(int argc, char *argv[])
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY);
-    server.sin_port = htons(atoi(argv[1]));
-	int success = bind(sockfd, (struct sockaddr *)&server, (socklen_t)sizeof(server));
-	if(success == -1){
+    server.sin_port = htons(portNo);
+	if(bind(serverFd, (struct sockaddr *)&server, (socklen_t)sizeof(server)) < 0){
 		printf("Failed to bind the socket. %s\n", strerror(errno));
+		close(serverFd);
 		return -1;
 	}	
 
-	// Listen for connections, max 128 connections (128 cause good practice)
-	if(listen(sockfd, 128) == -1){
+	// Listen for connections, max 128 connections (128 because it's good practice?)
+	if(listen(serverFd, 128) == -1){
 		printf("Failed listening for connections. %s\n", strerror(errno));
+		close(serverFd);
+		return -1;
 	}
 
 	for (;;) {
-		int acceptFd;
 		// initialize timeout
 		struct timeval timeout;
 		timeout.tv_sec = 30;
 		
 		socklen_t len = (socklen_t)sizeof(client);
-		acceptFd = accept(sockfd, (struct sockaddr *) &client, &len);
-		if(acceptFd > 0){
+		clientFd = accept(serverFd, (struct sockaddr *) &client, &len);
+		if(clientFd < 0){
 			printf("Failed to accept connection. %s\n", strerror(errno));
 		}
+		fprintf(stdout, "Client has connected\n");
 
-		ssize_t n = recvfrom(acceptFd, message, sizeof(message) - 1, 0, (struct sockaddr *)&client, &len);
+		ssize_t n = recvfrom(clientFd, message, sizeof(message) - 1, 0, (struct sockaddr *)&client, &len);
 		// Failed to receive from socket
         if(n < 0){
 			printf("Failed to receive data from the socket %s\n", strerror(errno));
+			close(clientFd);
+			close(serverFd);
+			return -1;
 		}
 		// Add a null-terminator to the message
 		message[n] = '\0';
 		//Remove this!
 		fprintf(stdout, "Received:\n%s\n", message);
 		
+		size_t size = strlen("Hey, Here is your data\n");
+		send(clientFd, "Hey, Here is your data\n", size, 0);
 		
 	}
+		close(clientFd);
+		close(serverFd);
 
 	// Listen on multiple sockets
 	// TODO 
@@ -92,6 +100,9 @@ int main(int argc, char *argv[])
 	/* PSEUDOCODE PLANNING
 		Our port is: 59442
 		RFC for Http 1.1: https://tools.ietf.org/html/rfc2616
+
+		Start server with: ./httpd 59442
+		Test server in seperate teminal with command: curl -X (GET/POST/HEAD) localhost:59442
 
 		validate args
 		Find port number from args
@@ -104,6 +115,7 @@ int main(int argc, char *argv[])
 		Make Post
 		Make Head
 		Free Memory
+		Close the connection
 
 		For each request print a single line to a log file that conforms to the format:
 			timestamp : <client ip>:<client port> <request method>
