@@ -113,6 +113,7 @@ int main(int argc, char *argv[])
 			dataField = g_strsplit(splitString[i], ": ", sizeof(splitString[i]));
 			fprintf(stdout, "Data Field: %s \n", dataField[0]);
 			// Do operation depending on the mode
+			// Check 
 			if(strstr(dataField[0], "GET") != NULL){
 				fprintf(stdout, "GET == %s \n",  dataField[0]);
 				// Do get
@@ -125,10 +126,22 @@ int main(int argc, char *argv[])
 				fprintf(stdout, "HEAD == %s \n", dataField[0]);
 				// Do Head
 			}
-
 		}
+
+		// Send data back to client
 		size_t size = strlen("Hey, Here is your data\n");
 		send(clientFd, "Hey, Here is your data\n", size, 0);
+
+		// Check for persistence
+		/*
+		if(persistent){
+			go on
+		}
+		else{
+			close the connection
+			close(clientFd);
+		}
+		*/
 		
 	}
 		close(clientFd);
