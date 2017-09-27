@@ -2,4 +2,4 @@
 #Script to upload to skel.ru.is
 #insert the script into the same folder that you want to cope, in this case it is /tsam_1
 #sshpass -p 'YOURPASSWORD' scp -r ../tsam_1 'yourusername'@skel.ru.is:/home/hir.is/'yourusername'
-sshpass -p 'Jokull128' scp -r /home/skulipardus/Háskólinn\ í\ Reykjavík/Tölvusamskipti/Http-Server-pt1/src/httpd.c  skulia15@skel.ru.is:tsam/pa2/src/httpd.c
+sshpass -p 'Jokull128' scp -r ./httpd.c  skulia15@skel.ru.is:tsam/pa2/src/httpd.c

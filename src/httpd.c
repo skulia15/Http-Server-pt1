@@ -14,8 +14,10 @@
 #include <time.h>
 #include <errno.h>
 
-#define MESSAGE_SIZE 512
+#define MESSAGE_SIZE 1024
+#define DATA_SIZE 512
 #define MAX_CLIENTS 20
+#define HEADER_SIZE 512
 
 // TODO 
 /* PSEUDOCODE PLANNING
@@ -54,18 +56,18 @@
 */
 /* Function definitions go here */
 void doMethod(int clientFd, gchar* methodType, gchar* protocol);
-void doGet(int clientFd);
+void doGet(int clientFd, gchar* protocol);
 void doPost(int clientFd);
 void doHead(int clientFd, gchar* protocol);
+void makeHeader(gchar* protocol, char* header, size_t contentLen);
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]){
 	int serverFd;
 	int clientFd;
 	int portNo;
-	//int isPersistent = TRUE;
 	struct sockaddr_in server, client;
 	char message[MESSAGE_SIZE];
+	//bool isPersistent = true;
 	
 	// Get the port number given in arguments
 	// The number of arguments should be 1 or more?
@@ -128,7 +130,7 @@ int main(int argc, char *argv[])
 		// Add a null-terminator to the message
 		message[n] = '\0';
 		//Remove this!
-		fprintf(stdout, "Received:\n%s\n", message);
+		fprintf(stdout, "Request:\n%s\n\n", message);
 
 		// Count the number of lines in the string
 		// Important! https://stackoverflow.com/questions/9052490/find-the-count-of-substring-in-string
@@ -138,8 +140,7 @@ int main(int argc, char *argv[])
 		while((tmp = (strstr(tmp, "\r\n")))){
 			countLines++;
 			tmp++;
-		} 
-		fprintf(stdout, "Number of lines is: %d\n", countLines);
+		}
 
 		// Split the string by newline and put them in an array
 		gchar**splitString = g_strsplit(message, "\r\n", countLines);
@@ -148,19 +149,16 @@ int main(int argc, char *argv[])
 		gchar* methodType = firstLine[0];
 		// Find the protocol (HTTP.1.1) 
 		gchar* protocol = firstLine[1];
-		fprintf(stdout, "Method Type:: %s \n", methodType);
-		fprintf(stdout, "Protocol: %s \n", protocol);
 		// Find the value of the headers of the request
+		/*
 		gchar** headerFields;
-		int i = 1;
-		for(i; i < countLines; i++){
+		int i;
+		for(i = 1; i < countLines; i++){
 			//fprintf(stdout, "Line %d: %s\n", i, splitString[i]);
 			// Split each line into headerFields and value
 			headerFields = g_strsplit(splitString[i], ": ", sizeof(splitString[i]));
-			fprintf(stdout, "Data Field: %s \n", headerFields[0]);
-			fprintf(stdout, "Value Field: %s \n", headerFields[1]);
 		}
-		fprintf(stdout, "Protocol is == %s \n", methodType);
+		*/
 
 		doMethod(clientFd, methodType, protocol);
 
@@ -174,19 +172,16 @@ int main(int argc, char *argv[])
 			close(clientFd);
 		}
 		*/
-		
 	}
-		close(clientFd);
-		close(serverFd);
-
-
+	close(clientFd);
+	close(serverFd);
 	return 0;
 }
 void doMethod(int clientFd, gchar* methodType, gchar* protocol){
 	// Do method depending on the mode
 		if( g_strcmp0(methodType, "GET") == 0){
 			// Do get
-			doGet(clientFd);
+			doGet(clientFd, protocol);
 		}
 		else if(g_strcmp0(methodType, "POST") == 0){
 			// Do Post
@@ -198,10 +193,26 @@ void doMethod(int clientFd, gchar* methodType, gchar* protocol){
 		}
 }
 
-void doGet(int clientFd){
+void doGet(int clientFd, gchar* protocol){
+	// The HTML for the page
+	char html[DATA_SIZE];
+	memset(html, 0, sizeof(html));
+	strcat(html, "<!DOCTYPE html><html><body><h1>Hello, World!</h1></body></html>");
+	// Create the header
+	char header[HEADER_SIZE];
+	printf("B4$*$*$*$$*$**$*$*$\n");
+	fflush(stdout);
+	makeHeader(protocol, header, strlen(html));
+	char response[MESSAGE_SIZE];
+	memset(response, 0, sizeof(response));
+
+	strcat(response, header);
+	strcat(response, html);
+
+	fprintf(stdout, "Response: \n%s", response);
+	fflush(stdout);
 	// Send data back to client
-	size_t size = strlen("This is a Web page, status code is 200?\n");
-	send(clientFd, "This is a Web page, status code is 200?\n", size, 0);
+	send(clientFd, response, sizeof(response), 0);
 
 }
 void doPost(int clientFd){
@@ -211,6 +222,16 @@ void doPost(int clientFd){
 	
 }
 void doHead(int clientFd, gchar* protocol){
+	// Create the header
+	char header[HEADER_SIZE];
+	makeHeader(protocol, header, 0);
+
+	// Send data back to client
+	size_t size = strlen(header);
+	send(clientFd, header, size, 0);
+}
+
+void makeHeader(gchar* protocol, char* header, size_t contentLen){
 	// https://stackoverflow.com/questions/1442116/how-to-get-date-and-time-value-in-c-program/30759067#30759067
 	// Configure time to the current time
 	time_t t = time(NULL);
@@ -218,27 +239,36 @@ void doHead(int clientFd, gchar* protocol){
 	char timeStamp[64];
 	strftime(timeStamp, sizeof(timeStamp), "%c", tm);
 
-	// Create the header
-	char header[2048];
+	
+	// https://stackoverflow.com/questions/20685080/convert-size-t-to-string
+	char contentLenStr[sizeof(contentLen)];
+	snprintf(contentLenStr, sizeof(contentLen), "%zu", contentLen);
+	
+	/*if(g_strcmp0(protocol, "HTTP/1.0")){
+		persistance = false;
+	}*/
+	
+	printf("AFTER$*$*$*$$*$**$*$*$\n");
+	fflush(stdout);
+	memset(header, 0, HEADER_SIZE * sizeof(char));
+	// Fill header with values	
 	strcat(header, protocol);
 	strcat(header, " 200 OK\n");
 	strcat(header, "Date: ");
 	strcat(header, timeStamp);
 	strcat(header, "\n");
 	strcat(header, "Server: ");
-	strcat(header, "ME\n");
+	strcat(header, "Great server name /v1.1/\n");
 	strcat(header, "Content-Length: ");
-	strcat(header, "SomeLength\n");
+	strcat(header, contentLenStr);
+	strcat(header, "\n");
 	strcat(header, "Content-Type: text/html\n");
 	strcat(header, "Connection: ");
-	strcat(header, "My persistance\n");
-	fprintf(stdout, "HEADER:\n %s", header);
-
-
-	// Send data back to client
-	size_t size = strlen(header);
-	send(clientFd, header, size, 0);
-	fflush
+	strcat(header, " Closed\n");
+	strcat(header, "\r\n");
+	/*if(persistance == false){
+		strcat(header, "Closed\n");
+	}*/
 }
 /*
 void log(){
