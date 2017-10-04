@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <glib.h>
+#include <sys/poll.h>
 #include <sys/time.h>
 #include <time.h>
 #include <errno.h>
@@ -25,7 +26,8 @@
 /* PSEUDOCODE PLANNING
 	Our port is: 59442
 	RFC for Http 1.1: https://tools.ietf.org/html/rfc2616
-	ssh tunnel: ssh -L 59442:127.0.0.1:59442 skulia15@skel.ru.is 
+	ssh tunnel: ssh -L 59442:127.0.0.1:59442 skulia15@skel.ru.is
+	Poll() info from: https://www.ibm.com/support/knowledgecenter/ssw_ibm_i_71/rzab6/poll.htm
 
 	Start server with: ./httpd 59442
 	Test server in seperate teminal with command: curl -X (GET/POST/HEAD) localhost:59442
@@ -44,6 +46,7 @@
 		if HTTP/1.0 -> not persistent
 		IF HTTP/1.1 -> persistent
 		if keep-alive != NULL -> persistent
+		FOR ALL CONNECTION 1.1 and 1.0 if Connection: closed -> NOT persistent
 	Handle connection based on persistence
 	Handle timeout, 30 sec
 	Check Operation (GET / POST/ HEAD) DONE
@@ -66,6 +69,7 @@
 	from the clients, which may be malicious, and deallocate what you do not need early. Zero
 	out every buffer before use, or allocate the buffer using g_new0().
 
+
 	
 
 
@@ -87,6 +91,7 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
 
 int main(int argc, char *argv[])
 {
+	int on = 1;
 	// The request sent by the client
 	char message[MESSAGE_SIZE];
 	// The file descriptor for the server
@@ -101,7 +106,20 @@ int main(int argc, char *argv[])
 	struct sockaddr_in server, client;
 	// Flag for persistence of the connection, false by default
 	bool persistence = false;
+	// Connections fd's for poll()
+	struct pollfd fds[200];
+	// Number of file descriptors
+	int nfds = 1;
+	// Set timeout for 30 seconds
+	int timeout = 6 * 1000;
 
+	// Initialize timeout
+	//https://stackoverflow.com/questions/4181784/how-to-set-socket-timeout-in-c-when-making-multiple-connections
+	/*struct timeval timeout;
+	// Set timeout for 30 seconds
+	timeout.tv_sec = 3;
+	timeout.tv_usec = 0;
+	*/
 	// Get the port number given in arguments
 	// The number of arguments should be 1 or more
 	if (argc < 2)
@@ -122,6 +140,22 @@ int main(int argc, char *argv[])
 		printf("Failed to create the socket. %s\n", strerror(errno));
 		return -1;
 	}
+
+	/*
+	// Set the timeout to the socket we have created
+	if (setsockopt (serverFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0){
+		// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
+		fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+		close(serverFd);
+		return -1;
+	}*/
+	if (setsockopt(serverFd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on)) < 0){
+		// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
+		fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+		close(serverFd);
+		return -1;
+	}
+
 	// Network functions need arguments in network byte order instead
 	// of host byte order. The macros htonl, htons convert the
 	// values.
@@ -136,36 +170,53 @@ int main(int argc, char *argv[])
 		close(serverFd);
 		return -1;
 	}
-	// Initialize timeout
-	//https://stackoverflow.com/questions/4181784/how-to-set-socket-timeout-in-c-when-making-multiple-connections
-	struct timeval timeout;
-	// Set timeout for 30 seconds
-	timeout.tv_sec = 3;
-	timeout.tv_usec = 0;
-	// Set the timeout to the socket we have created
-	if (setsockopt (serverFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0){
-		fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
-		//110 is error for timeout
-	}
 	
 	// Listen for connections, max 128 connections (128 because it's good practice?)
 	// For only 1 connection at a time use 1
 	// Mark socket as accepting connections, max 1 in listen queue
-	if (listen(serverFd, 1) == -1)
+	if (listen(serverFd, 128) < 0)
 	{
 		printf("Failed listening for connections. %s\n", strerror(errno));
 		close(serverFd);
 		return -1;
 	}
 
+	// Clear the fd's
+	memset(fds, 0, sizeof(fds));
+
+	// Set up the first socket
+	fds[0].fd = serverFd;
+	fds[0].events = POLLIN;
+
 	for (;;)
 	{
+		int pollVal = poll(fds, nfds, timeout);
+		if(pollVal == -1){
+			// Error
+			printf("Poll encountered an error: %s\n", strerror(errno));
+			break;	
+		}
+
+		else if(pollVal == 0){
+			// timeout
+			printf("Connection timed out\n");
+			printf("Closing connection\n");
+			shutdown(clientFd, SHUT_RDWR);
+			close(clientFd);
+		}
+		else{
+			// 1 or more fd's are available
+			printf("fd's are available\n");
+		}
+
+
 		memset(message, 0, sizeof(message));
 		socklen_t len = (socklen_t)sizeof(client);
 		// Accept a single connection
 		clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
 		if (clientFd < 0)
 		{
+			//110 is error for timeout
 			printf("Failed to accept connection. %s\n", strerror(errno));
 		}
 		// Receive request from the connected client
@@ -173,11 +224,8 @@ int main(int argc, char *argv[])
 		// Failed to receive from socket
 		if (n < 0)
 		{
-			printf("Connection timed out\n");
-			printf("Closing connection\n");
-			shutdown(clientFd, SHUT_RDWR);
-			close(clientFd);
-			continue;	
+			printf("Failed to receive from client: %s", strerror(errno));
+			//handle error
 		}
 		// Add a null-terminator to the message(request from client)
 		message[n] = '\0';
@@ -204,18 +252,18 @@ int main(int argc, char *argv[])
 		gchar *page = firstLine[1];
 		// Find the protocol (HTTP.1.1)
 		gchar *protocol = firstLine[2];
-
+		
 		// Data is found in request when we have seen 2 "\r\n" in a row.
 		gchar **headerDataSplit = g_strsplit(message, "\r\n\r\n", countLines);
-
-		// Check for persistence
-		persistence = checkPersistence(headerDataSplit[0], protocol);
-
 		gchar *data = headerDataSplit[1];
-
+		
+		persistence = checkPersistence(headerDataSplit[0], protocol);
+		
 		doMethod(clientFd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, persistence);
 		g_strfreev(splitString);
 		g_strfreev(firstLine);
+		
+		// Check for persistence
 
 		// If the connection is not persistent, close the connection
 		if(!persistence){
@@ -228,13 +276,19 @@ int main(int argc, char *argv[])
 			// Keep it alive??
 			printf("Connection IS persistent, keep it alive\n");
 		}
+		
 	}
 	// If unexpected failiure, close the connection 
 	printf("Server encountered an error, Shutting Down\n");
 	shutdown(clientFd, SHUT_RDWR);
-	shutdown(serverFd, SHUT_RDWR);
 	close(clientFd);
 	close(serverFd);
+	int i;
+	for (i = 0; i < nfds; i++)
+	{
+	  if(fds[i].fd >= 0)
+		close(fds[i].fd);
+	}
 	return 0;
 }
 
@@ -398,7 +452,8 @@ void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char
 	strcat(content, HOST_URL);
 	strcat(content, page);
 	strcat(content, " ");
-	strcat(content, getIPAddress(clientAddress));
+	char* clientIP = getIPAddress(clientAddress);
+	strcat(content, clientIP);
 	strcat(content, ":");
 	strcat(content, portNo);
 	
@@ -419,6 +474,7 @@ void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char
 void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char* portNo, char* statusCode)
 {
 	FILE *logFile;
+	char* clientIP = getIPAddress(clientAddress);
 
 	// Logger
 	logFile = fopen("httpd.log", "a");
@@ -432,7 +488,8 @@ void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char* por
 	
 	char IPClientStr[INET_ADDRSTRLEN];
 	memset(IPClientStr, 0, sizeof(IPClientStr));
-	strcpy(IPClientStr, getIPAddress(clientAddress));
+
+	strcpy(IPClientStr, clientIP);
 	
 	// Add text to logfile
 	// Print time
@@ -484,15 +541,15 @@ char *getTime()
 bool checkPersistence(gchar* header, char* protocol){
 	//Protocol is of type HTTP/1.1, persistent by default
 	if(g_strcmp0(protocol, "HTTP/1.1") == 0){
-		//printf("____Persistent Cause HTTP/1.1\n");
+		printf("____Persistent Cause HTTP/1.1\n");
 		return true;
 	}
 	// Check if request specifies persistent connection
 	if(strstr(header, "Connection: keep-alive") != NULL){
-		//printf("____Persistent Cause Connection Keep alive\n");
+		printf("____Persistent Cause Connection Keep alive\n");
 		return true;
 	}
-	//printf("____NOT persistent\n");
+	printf("____NOT persistent\n");
 	// Connection is not persistent.
 	return false;
 }
