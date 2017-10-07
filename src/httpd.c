@@ -69,25 +69,25 @@
 	from the clients, which may be malicious, and deallocate what you do not need early. Zero
 	out every buffer before use, or allocate the buffer using g_new0().
 
-
+	HTML CHANGE PORT 
 	
 
 
 */
 /* Function definitions go here */
 void doMethod(int clientFd, gchar *methodType, gchar *protocol,
-			  struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence);
-void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence);
-void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence);
-void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence);
+			  struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client);
+void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client);
+void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client);
+void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client);
 void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persistence);
-void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char *html, gchar *data);
-void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char* portNo, char* statusCode);
+void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char *html, gchar *data, struct sockaddr_in client);
+void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char *portNo, char *statusCode, struct sockaddr_in client);
 char *getIPAddress(struct sockaddr_in *clientAddress);
 char *getTime();
 size_t my_strftime(char *s, size_t max, const char *fmt, const struct tm *tm);
-bool checkPersistence(gchar* header, char* protocol);
-void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, char *portNo);
+bool checkPersistence(gchar *header, char *protocol);
+void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, char *portNo, struct sockaddr_in client);
 
 int main(int argc, char *argv[])
 {
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
 	// The file descriptor for the server
 	int serverFd;
 	// The file descriptor for the client
-	int clientFd;
+	int clientFd = -1;
 	// The port number as an integer, given from command line
 	int portNo;
 	// The port number as a string, given from command line
@@ -149,7 +149,8 @@ int main(int argc, char *argv[])
 		close(serverFd);
 		return -1;
 	}*/
-	if (setsockopt(serverFd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on)) < 0){
+	if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
+	{
 		// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
 		fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
 		close(serverFd);
@@ -170,7 +171,7 @@ int main(int argc, char *argv[])
 		close(serverFd);
 		return -1;
 	}
-	
+
 	// Listen for connections, max 128 connections (128 because it's good practice?)
 	// For only 1 connection at a time use 1
 	// Mark socket as accepting connections, max 1 in listen queue
@@ -191,37 +192,51 @@ int main(int argc, char *argv[])
 	for (;;)
 	{
 		int pollVal = poll(fds, nfds, timeout);
-		if(pollVal == -1){
+		if (pollVal == -1)
+		{
 			// Error
 			printf("Poll encountered an error: %s\n", strerror(errno));
-			break;	
+			break;
 		}
-
-		else if(pollVal == 0){
+		else if (pollVal == 0)
+		{
 			// timeout
 			printf("Connection timed out\n");
 			printf("Closing connection\n");
 			shutdown(clientFd, SHUT_RDWR);
 			close(clientFd);
+			persistence = false;
 		}
-		else{
+		else
+		{
 			// 1 or more fd's are available
 			printf("fd's are available\n");
 		}
 
-
 		memset(message, 0, sizeof(message));
 		socklen_t len = (socklen_t)sizeof(client);
-		// Accept a single connection
-		clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
+
+
+		printf("ClientFD bf: %i", clientFd);
+		fflush(stdout);
+		// Accept a single connection, if the last connection wasn't persistent, or timed out
+		if(!persistence){
+			printf("NOT PERSISTENT");
+			clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
+		}
+
+		printf("ClientFD after: %i", clientFd);
+		fflush(stdout);
 		if (clientFd < 0)
 		{
 			//110 is error for timeout
 			printf("Failed to accept connection. %s\n", strerror(errno));
 		}
 		// Receive request from the connected client
-		ssize_t n = recvfrom(clientFd, message, sizeof(message) - 1, 0, (struct sockaddr *)&client, &len);
+		ssize_t n = recv(clientFd, message, sizeof(message) - 1, 0);
 		// Failed to receive from socket
+
+		if ( n == 0 ) { printf ( "\nHEYBITDS\n" ); shutdown ( clientFd, SHUT_RDWR); close ( clientFd ); persistence = false; continue;  }
 		if (n < 0)
 		{
 			printf("Failed to receive from client: %s", strerror(errno));
@@ -229,10 +244,10 @@ int main(int argc, char *argv[])
 		}
 		// Add a null-terminator to the message(request from client)
 		message[n] = '\0';
-		// 
+		//
 		fprintf(stdout, "*****Request from client:***\n%s*************\n", message);
 
-		// Count the number of lines in the string
+		// Count the number of lines in the stringg_str
 		// https://stackoverflow.com/questions/9052490/find-the-count-of-substring-in-string
 		const char *tmp = message;
 		int countLines = 0;
@@ -244,41 +259,48 @@ int main(int argc, char *argv[])
 		}
 
 		// Split the string by newline and put them in an array
+		printf("oy%soy",message);
+		fflush(stdout);
 		gchar **splitString = g_strsplit(message, "\r\n", countLines);
+		printf("%s",splitString[0]);
+		fflush(stdout);
 		gchar **firstLine = g_strsplit(splitString[0], " ", sizeof(splitString[0]));
 		// Find the method type (GET/POST/HEAD)
+		printf("EY3");
+		fflush(stdout);
 		gchar *methodType = firstLine[0];
 		// Find the requested page in the request
 		gchar *page = firstLine[1];
 		// Find the protocol (HTTP.1.1)
 		gchar *protocol = firstLine[2];
-		
+
 		// Data is found in request when we have seen 2 "\r\n" in a row.
 		gchar **headerDataSplit = g_strsplit(message, "\r\n\r\n", countLines);
 		gchar *data = headerDataSplit[1];
-		
+
 		persistence = checkPersistence(headerDataSplit[0], protocol);
-		
-		doMethod(clientFd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, persistence);
+
+		doMethod(clientFd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, persistence, client);
 		g_strfreev(splitString);
 		g_strfreev(firstLine);
-		
+
 		// Check for persistence
 
 		// If the connection is not persistent, close the connection
-		if(!persistence){
+		if (!persistence)
+		{
 			printf("Connection is not persistent, shut it down\n");
 			shutdown(clientFd, SHUT_RDWR);
 			close(clientFd);
 		}
 		// For persistent connections
-		else{
+		else
+		{
 			// Keep it alive??
 			printf("Connection IS persistent, keep it alive\n");
 		}
-		
 	}
-	// If unexpected failiure, close the connection 
+	// If unexpected failure, close the connection
 	printf("Server encountered an error, Shutting Down\n");
 	shutdown(clientFd, SHUT_RDWR);
 	close(clientFd);
@@ -286,8 +308,8 @@ int main(int argc, char *argv[])
 	int i;
 	for (i = 0; i < nfds; i++)
 	{
-	  if(fds[i].fd >= 0)
-		close(fds[i].fd);
+		if (fds[i].fd >= 0)
+			close(fds[i].fd);
 	}
 	return 0;
 }
@@ -295,95 +317,96 @@ int main(int argc, char *argv[])
 // Compares the method value of the header, if the given value matches a supported method the matched method is initiated.
 // Handles error if given method is not supported
 void doMethod(int clientFd, gchar *methodType, gchar *protocol,
-			  struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence)
+			  struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client)
 {
 	// Do method depending on the mode
 	if (g_strcmp0(methodType, "GET") == 0)
 	{
 		// Do get
-		doGet(clientFd, protocol, clientAddress, page, portNo, persistence);
+		doGet(clientFd, protocol, clientAddress, page, portNo, persistence, client);
 	}
 	else if (g_strcmp0(methodType, "POST") == 0)
 	{
 		// Do Post
-		doPost(clientFd, protocol, clientAddress, page, portNo, data, persistence);
+		doPost(clientFd, protocol, clientAddress, page, portNo, data, persistence, client);
 	}
 	else if (g_strcmp0(methodType, "HEAD") == 0)
 	{
 		// Do Head
-		doHead(clientFd, protocol, clientAddress, page, portNo, persistence);
+		doHead(clientFd, protocol, clientAddress, page, portNo, persistence, client);
 	}
-	else{
-		handleUnsupported(clientFd, methodType, protocol, clientAddress, portNo);
+	else
+	{
+		handleUnsupported(clientFd, methodType, protocol, clientAddress, portNo, client);
 	}
-	
 }
 
 // Description of function
-void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence)
+void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client)
 {
 	// The HTML for the page
 	char html[DATA_SIZE];
-	makeBody(clientAddress, page, portNo, html, NULL);
-	
+	makeBody(clientAddress, page, portNo, html, NULL, client);
+
 	// Create the header
 	char header[HEADER_SIZE];
 	makeHeader(protocol, header, strlen(html), persistence);
-	
+
 	char response[MESSAGE_SIZE];
 	memset(response, 0, sizeof(response));
-	
+
 	strcat(response, header);
 	strcat(response, html);
-	
+
 	fprintf(stdout, "Response: \n%s", response);
 	fflush(stdout);
 	// Send data back to client
 	send(clientFd, response, sizeof(response), 0);
-	makeLogFile(clientAddress, "GET", portNo, "200 OK");
+	makeLogFile(clientAddress, "GET", portNo, "200 OK", client);
 }
 
-void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence)
+void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client)
 {
 	// The HTML for the page
 	char html[DATA_SIZE];
-	makeBody(clientAddress, page, portNo, html, data);
-	
+	makeBody(clientAddress, page, portNo, html, data, client);
+
 	// Create the header
 	char header[HEADER_SIZE];
 	makeHeader(protocol, header, strlen(html), persistence);
-	
+
 	char response[MESSAGE_SIZE];
 	memset(response, 0, sizeof(response));
-	
+
 	strcat(response, header);
 	strcat(response, html);
-	
+
 	fprintf(stdout, "Response: \n%s", response);
 	fflush(stdout);
 	// Send data back to client
 	send(clientFd, response, sizeof(response), 0);
-	makeLogFile(clientAddress, "POST", portNo, "200 OK");
+	makeLogFile(clientAddress, "POST", portNo, "200 OK", client);
 }
 
-void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence)
+void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client)
 {
 	char html[DATA_SIZE];
-	makeBody(clientAddress, page, portNo, html, NULL);
+	makeBody(clientAddress, page, portNo, html, NULL, client);
 	// Create the header
 	char header[HEADER_SIZE];
 	makeHeader(protocol, header, strlen(html), persistence);
-	
+
 	fprintf(stdout, "Header Response: \n%s", header);
 	fflush(stdout);
 	// Send data back to client
 	send(clientFd, header, sizeof(header), 0);
-	makeLogFile(clientAddress, "HEAD", portNo, "200 OK");
+	makeLogFile(clientAddress, "HEAD", portNo, "200 OK", client);
 }
 
 // Creates an error response sent to the client if the request he sends contains
 // a method that is not supported by the server. Response code 405 for Method Not Allowed
-void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, char *portNo){
+void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, char *portNo, struct sockaddr_in client)
+{
 	// Create the header
 	char header[HEADER_SIZE];
 
@@ -397,20 +420,20 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
 	fprintf(stdout, "Error Response: \n%s", header);
 	fflush(stdout);
 	send(clientFd, header, sizeof(header), 0);
-	makeLogFile(clientAddress, methodType, portNo, "405 Method Not Allowed");
+	makeLogFile(clientAddress, methodType, portNo, "405 Method Not Allowed", client);
 	//Hotfix for client not disconnection when error
 	close(clientFd);
 }
 
-// Creates the header 
+// Creates the header
 void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persistence)
 {
 	char *timeStamp = getTime();
-	
+
 	// https://stackoverflow.com/questions/20685080/convert-size-t-to-string
 	char contentLenStr[sizeof(contentLen)];
 	snprintf(contentLenStr, sizeof(contentLen), "%zu", contentLen);
-	
+
 	memset(header, 0, HEADER_SIZE * sizeof(char));
 	// Fill header with values
 	strcat(header, protocol);
@@ -425,56 +448,62 @@ void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persisten
 	strcat(header, "\r\n");
 	strcat(header, "Content-Type: text/html\n");
 	strcat(header, "Connection: ");
-	if(persistence){
+	if (persistence)
+	{
 		strcat(header, "keep-alive\r\n");
-	}	
-	else{
+	}
+	else
+	{
 		strcat(header, "Closed\r\n");
 	}
-	
+
 	// Do indicate that the header field is done
 	strcat(header, "\r\n");
-	
+
 	free(timeStamp);
 }
 
 // Creates the body of the HTML data for the requested page.
-void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char *html, gchar *data)
+void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char *html, gchar *data, struct sockaddr_in client)
 {
 	memset(html, 0, DATA_SIZE * sizeof(char));
-	
+
 	// Open of HTML
 	strcat(html, "<!DOCTYPE html><html><body><h1>");
-	
+
 	// Add this to the html URL/RequestedPage ClientIP:Portnumber
 	char content[DATA_SIZE];
 	memset(content, 0, sizeof(content));
 	strcat(content, HOST_URL);
-	strcat(content, page);
-	strcat(content, " ");
-	char* clientIP = getIPAddress(clientAddress);
-	strcat(content, clientIP);
 	strcat(content, ":");
 	strcat(content, portNo);
-	
+	strcat(content, page);
+	strcat(content, " ");
+	char *clientIP = getIPAddress(clientAddress);
+	strcat(content, clientIP);
+	strcat(content, ":");
+	char *clientPort = g_strdup_printf("%i", client.sin_port);
+	strcat(content, clientPort);
+	g_free(clientPort);
+
 	// Add content to HTML
 	strcat(html, content);
 	if (data != NULL)
 	{
 		strcat(html, data);
 	}
-	
+
 	// Close HTML
 	strcat(html, "</h1></body></html>\n");
 }
 
-// Creates a log file called "httpd.log".  If the file does not exist the program creates it. 
+// Creates a log file called "httpd.log".  If the file does not exist the program creates it.
 // For each request print a single line to a log file that conforms to the format:
 // timeStamp : <client ip>:<client port> <request method> <requested URL> : <response code>
-void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char* portNo, char* statusCode)
+void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char *portNo, char *statusCode, struct sockaddr_in client)
 {
 	FILE *logFile;
-	char* clientIP = getIPAddress(clientAddress);
+	char *clientIP = getIPAddress(clientAddress);
 
 	// Logger
 	logFile = fopen("httpd.log", "a");
@@ -482,28 +511,29 @@ void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char* por
 	{
 		printf("Failed to create logfile %s\n", strerror(errno));
 	}
-	
+
 	// Get current time
 	char *timeStamp = getTime();
-	
+
 	char IPClientStr[INET_ADDRSTRLEN];
 	memset(IPClientStr, 0, sizeof(IPClientStr));
 
 	strcpy(IPClientStr, clientIP);
-	
+
 	// Add text to logfile
 	// Print time
 	fprintf(logFile, "%s : ", timeStamp);
 	// Print IP of client
 	fprintf(logFile, "%s:", IPClientStr);
 	// Print port number
-	fprintf(logFile, "%s ", portNo);
+	gchar *clientPort = g_strdup_printf("%i", client.sin_port);
+	fprintf(logFile, "%s ", clientPort);
+	g_free(clientPort);
 	// Print request method
 	fprintf(logFile, "%s ", methodType);
 	// Print requested URL
 	fprintf(logFile, "%s:%s : ", HOST_URL, portNo);
 	// Print response code
-	// TODO: get actual response code? priority: low
 	fprintf(logFile, "%s\n", statusCode);
 	// Close the log file
 	fclose(logFile);
@@ -518,7 +548,7 @@ char *getIPAddress(struct sockaddr_in *clientAddress)
 	struct in_addr ipAddr = clientAddress->sin_addr;
 	char IPClientStr[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &ipAddr, IPClientStr, INET_ADDRSTRLEN);
-	
+
 	return IPClientStr;
 }
 
@@ -538,14 +568,17 @@ char *getTime()
 
 // Returns a boolean value indicating if the connection requests a persistent connection or not
 // True if presistent, false if not.
-bool checkPersistence(gchar* header, char* protocol){
+bool checkPersistence(gchar *header, char *protocol)
+{
 	//Protocol is of type HTTP/1.1, persistent by default
-	if(g_strcmp0(protocol, "HTTP/1.1") == 0){
+	if (g_strcmp0(protocol, "HTTP/1.1") == 0 && strstr(header, "Connection: closed") == NULL)
+	{
 		printf("____Persistent Cause HTTP/1.1\n");
 		return true;
 	}
 	// Check if request specifies persistent connection
-	if(strstr(header, "Connection: keep-alive") != NULL){
+	if (strstr(header, "Connection: keep-alive") != NULL)
+	{
 		printf("____Persistent Cause Connection Keep alive\n");
 		return true;
 	}
