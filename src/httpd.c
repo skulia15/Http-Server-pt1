@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
     // Listen for connections, max 128 connections (128 because it's good practice?)
     // For only 1 connection at a time use 1
     // Mark socket as accepting connections, max 1 in listen queue
-    if (listen(serverFd, 128) < 0)
+    if (listen(serverFd, 32) < 0)
     {
         printf("Failed listening for connections. %s\n", strerror(errno));
         close(serverFd);
@@ -208,12 +208,13 @@ int main(int argc, char *argv[])
     fds[0].fd = serverFd;
     fds[0].events = POLLIN;
 
+    int timeout = 3*1000;
     // Main loop
     for (;;)
     {
 
         // Polling
-        int pollVal = poll(fds, nfds, -1);
+        int pollVal = poll(fds, nfds, timeout);
 
         // Error
         if (pollVal < 0)
@@ -224,15 +225,15 @@ int main(int argc, char *argv[])
         }
 
         // Timeout
-        if (pollVal == 0)
-        {
-            printf("Connection timed out\n");
-            printf("Closing connection\n");
-            shutdown(clientFd, SHUT_RDWR);
-            close(clientFd);
-            persistence = false;
-            continue;
-        }
+        // if (pollVal == 0)
+        // {
+        //     printf("Connection timed out\n");
+        //     printf("Closing connection\n");
+        //     //shutdown(clientFd, SHUT_RDWR);
+        //     //close(clientFd);
+        //     persistence = false;
+        //     continue;
+        // }
         //printf("\nNFDS: %i\n", nfds);
         fflush(stdout);
         current_size = nfds;
@@ -241,7 +242,7 @@ int main(int argc, char *argv[])
 
             //printf("\nx: %i\n", x);
             fflush(stdout);
-            if (fds[x].revents == 0)
+            if (fds[x].revents != POLLIN)
                 continue;
 
             if (fds[x].fd == serverFd)
@@ -274,7 +275,6 @@ int main(int argc, char *argv[])
             }
             else
             {
-                persistence = true;
                 //printf("\nChecking on  new client dudeson\n");
                 fflush(stdout);
                 setTimeout(fds[x].fd, 1);
@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
                     ssize_t n = recv(fds[x].fd, message, sizeof(message) - 1, 0);
 
                     // Failed to receive from socket
-                    if (n == 0)
+                    if (n <= 0)
                     {
                         clock_t difference = clock() - fdTimes[x];
                         int diffSec = difference / CLOCKS_PER_SEC;
@@ -299,12 +299,12 @@ int main(int argc, char *argv[])
                         break;
                     }
                     // Handle error
-                    if (n < 0)
-                    {
-                        printf("Failed to receive from client: %s", strerror(errno));
-                        persistence = false;
-                        break;
-                    }
+                    // if (n < 0)
+                    // {
+                    //     printf("Failed to receive from client: %s", strerror(errno));
+                    //     persistence = false;
+                    //     break;
+                    // }
 
                     fdTimes[x] = clock();
 
@@ -349,13 +349,12 @@ int main(int argc, char *argv[])
 
                 if (!persistence)
                 {
-                    printf("!persistance");
+                    printf("!persistance\n");
                     fflush(stdout);
                     shutdown(fds[x].fd, SHUT_RDWR);
                     close(fds[x].fd);
                     fds[x].fd = -1;
                     fdRemoved = true;
-                    persistence = true;
                 }
             }
         }
@@ -435,7 +434,7 @@ void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gch
     fprintf(stdout, "\nResponse: \n%s\n", response);
     fflush(stdout);
     // Send data back to client
-    send(clientFd, response, sizeof(response), 0);
+    send(clientFd, response, strlen(response), 0);
     makeLogFile(clientAddress, "GET", portNo, "200 OK", client);
 }
 
@@ -458,7 +457,7 @@ void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gc
     fprintf(stdout, "\nResponse: \n%s\n", response);
     fflush(stdout);
     // Send data back to client
-    send(clientFd, response, sizeof(response), 0);
+    send(clientFd, response, strlen(response), 0);
     makeLogFile(clientAddress, "POST", portNo, "200 OK", client);
 }
 
@@ -473,7 +472,7 @@ void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gc
     fprintf(stdout, "\nHeader Response: \n%s\n", header);
     fflush(stdout);
     // Send data back to client
-    send(clientFd, header, sizeof(header), 0);
+    send(clientFd, header, strlen(header), 0);
     makeLogFile(clientAddress, "HEAD", portNo, "200 OK", client);
 }
 
@@ -493,7 +492,7 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
     strcat(header, "\r\n");
     fprintf(stdout, "\nError Response: \n%s\n", header);
     fflush(stdout);
-    send(clientFd, header, sizeof(header), 0);
+    send(clientFd, header, strlen(header), 0);
     makeLogFile(clientAddress, methodType, portNo, "405 Method Not Allowed", client);
     //Hotfix for client not disconnection when error
     close(clientFd);
@@ -521,15 +520,15 @@ void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persisten
     strcat(header, contentLenStr);
     strcat(header, "\r\n");
     strcat(header, "Content-Type: text/html\n");
-    strcat(header, "Connection: ");
-    if (persistence)
-    {
-        strcat(header, "keep-alive\r\n");
-    }
-    else
-    {
-        strcat(header, "Closed\r\n");
-    }
+    //strcat(header, "Connection: ");
+    // if (persistence)
+    // {
+    //     strcat(header, "keep-alive\r\n");
+    // }
+    // else
+    // {
+    //     strcat(header, "close\r\n");
+    // }
 
     // Do indicate that the header field is done
     strcat(header, "\r\n");
