@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 
 #define MESSAGE_SIZE 1024
 #define DATA_SIZE 512
@@ -88,6 +89,7 @@ char *getTime();
 size_t my_strftime(char *s, size_t max, const char *fmt, const struct tm *tm);
 bool checkPersistence(gchar *header, char *protocol);
 void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, char *portNo, struct sockaddr_in client);
+void setTimeout(int fd, int secs);
 
 int main(int argc, char *argv[])
 {
@@ -111,15 +113,11 @@ int main(int argc, char *argv[])
 	// Number of file descriptors
 	int nfds = 1;
 	// Set timeout for 30 seconds
-	int timeout = 6 * 1000;
+	//int timeout = 6 * 1000;
 
 	// Initialize timeout
 	//https://stackoverflow.com/questions/4181784/how-to-set-socket-timeout-in-c-when-making-multiple-connections
-	/*struct timeval timeout;
-	// Set timeout for 30 seconds
-	timeout.tv_sec = 3;
-	timeout.tv_usec = 0;
-	*/
+
 	// Get the port number given in arguments
 	// The number of arguments should be 1 or more
 	if (argc < 2)
@@ -141,21 +139,20 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	/*
-	// Set the timeout to the socket we have created
-	if (setsockopt (serverFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0){
-		// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
-		fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
-		close(serverFd);
-		return -1;
-	}*/
-	if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
-	{
-		// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
-		fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
-		close(serverFd);
-		return -1;
-	}
+	// if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
+	// {
+	// 	// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
+	// 	fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+	// 	close(serverFd);
+	// 	return -1;
+	// }
+
+	// if (ioctl(serverFd, FIONBIO, (char *)&on) < 0)
+	// {
+	// 	fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+	// 	close(serverFd);
+	// 	return -1;
+	// }
 
 	// Network functions need arguments in network byte order instead
 	// of host byte order. The macros htonl, htons convert the
@@ -171,6 +168,17 @@ int main(int argc, char *argv[])
 		close(serverFd);
 		return -1;
 	}
+
+	struct timeval timeout;
+	// Set timeout for 30 seconds
+	// timeout.tv_sec = 5;
+	// timeout.tv_usec = 0;
+	// if (setsockopt (serverFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0){
+	// 	// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
+	// 	fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+	// 	close(serverFd);
+	// 	return -1;
+	// }
 
 	// Listen for connections, max 128 connections (128 because it's good practice?)
 	// For only 1 connection at a time use 1
@@ -191,55 +199,69 @@ int main(int argc, char *argv[])
 
 	for (;;)
 	{
-		int pollVal = poll(fds, nfds, timeout);
-		if (pollVal == -1)
+		// int pollVal = poll(fds, nfds, timeout);
+		// if (pollVal == -1)
+		// {
+		// 	// Error
+		// 	printf("Poll encountered an error: %s\n", strerror(errno));
+		// 	break;
+		// }
+		// else if (pollVal == 0)
+		// {
+		// 	// timeout
+		// 	printf("Connection timed out\n");
+		// 	printf("Closing connection\n");
+		// 	shutdown(clientFd, SHUT_RDWR);
+		// 	close(clientFd);
+		// 	persistence = false;
+		// }
+		// else
+		// {
+		// 	// 1 or more fd's are available
+		// 	printf("fd's are available\n");
+		// }
+
+		memset(message, 0, sizeof(message));
+
+		printf("\nClientFD bf: %i\n", clientFd);
+		fflush(stdout);
+		// Accept a single connection, if the last connection wasn't persistent, or timed out
+		if (!persistence)
 		{
-			// Error
-			printf("Poll encountered an error: %s\n", strerror(errno));
-			break;
+			// Set timeout for 30 seconds
+			setTimeout(clientFd, 0);
+			socklen_t len = (socklen_t)sizeof(client);
+
+			printf("\nNOT PERSISTENT\n");
+			clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
+			if (clientFd < 0)
+			{
+				//110 is error for timeout
+				printf("Failed to accept connection. %s\n", strerror(errno));
+				continue;
+			}
 		}
-		else if (pollVal == 0)
+
+		setTimeout(clientFd, 6);
+		printf("\nClientFD after: %i\n", clientFd);
+		fflush(stdout);
+
+		// Receive request from the connected client
+		ssize_t n = recv(clientFd, message, sizeof(message) - 1, 0);
+
+		// Failed to receive from socket
+		if (n == 0)
 		{
-			// timeout
-			printf("Connection timed out\n");
-			printf("Closing connection\n");
+			printf("\nMessage is empty\n");
 			shutdown(clientFd, SHUT_RDWR);
 			close(clientFd);
 			persistence = false;
+			continue;
 		}
-		else
-		{
-			// 1 or more fd's are available
-			printf("fd's are available\n");
-		}
-
-		memset(message, 0, sizeof(message));
-		socklen_t len = (socklen_t)sizeof(client);
-
-
-		printf("ClientFD bf: %i", clientFd);
-		fflush(stdout);
-		// Accept a single connection, if the last connection wasn't persistent, or timed out
-		if(!persistence){
-			printf("NOT PERSISTENT");
-			clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
-		}
-
-		printf("ClientFD after: %i", clientFd);
-		fflush(stdout);
-		if (clientFd < 0)
-		{
-			//110 is error for timeout
-			printf("Failed to accept connection. %s\n", strerror(errno));
-		}
-		// Receive request from the connected client
-		ssize_t n = recv(clientFd, message, sizeof(message) - 1, 0);
-		// Failed to receive from socket
-
-		if ( n == 0 ) { printf ( "\nHEYBITDS\n" ); shutdown ( clientFd, SHUT_RDWR); close ( clientFd ); persistence = false; continue;  }
 		if (n < 0)
 		{
 			printf("Failed to receive from client: %s", strerror(errno));
+			continue;
 			//handle error
 		}
 		// Add a null-terminator to the message(request from client)
@@ -259,14 +281,11 @@ int main(int argc, char *argv[])
 		}
 
 		// Split the string by newline and put them in an array
-		printf("oy%soy",message);
 		fflush(stdout);
 		gchar **splitString = g_strsplit(message, "\r\n", countLines);
-		printf("%s",splitString[0]);
 		fflush(stdout);
 		gchar **firstLine = g_strsplit(splitString[0], " ", sizeof(splitString[0]));
 		// Find the method type (GET/POST/HEAD)
-		printf("EY3");
 		fflush(stdout);
 		gchar *methodType = firstLine[0];
 		// Find the requested page in the request
@@ -287,18 +306,18 @@ int main(int argc, char *argv[])
 		// Check for persistence
 
 		// If the connection is not persistent, close the connection
-		if (!persistence)
-		{
-			printf("Connection is not persistent, shut it down\n");
-			shutdown(clientFd, SHUT_RDWR);
-			close(clientFd);
-		}
-		// For persistent connections
-		else
-		{
-			// Keep it alive??
-			printf("Connection IS persistent, keep it alive\n");
-		}
+		// if (!persistence)
+		// {
+		// 	printf("Connection is not persistent, shut it down\n");
+		// 	shutdown(clientFd, SHUT_RDWR);
+		// 	close(clientFd);
+		// }
+		// // For persistent connections
+		// else
+		// {
+		// 	// Keep it alive??
+		// 	printf("Connection IS persistent, keep it alive\n");
+		// }
 	}
 	// If unexpected failure, close the connection
 	printf("Server encountered an error, Shutting Down\n");
@@ -358,7 +377,7 @@ void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gch
 	strcat(response, header);
 	strcat(response, html);
 
-	fprintf(stdout, "Response: \n%s", response);
+	fprintf(stdout, "\nResponse: \n%s\n", response);
 	fflush(stdout);
 	// Send data back to client
 	send(clientFd, response, sizeof(response), 0);
@@ -381,7 +400,7 @@ void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gc
 	strcat(response, header);
 	strcat(response, html);
 
-	fprintf(stdout, "Response: \n%s", response);
+	fprintf(stdout, "\nResponse: \n%s\n", response);
 	fflush(stdout);
 	// Send data back to client
 	send(clientFd, response, sizeof(response), 0);
@@ -396,7 +415,7 @@ void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gc
 	char header[HEADER_SIZE];
 	makeHeader(protocol, header, strlen(html), persistence);
 
-	fprintf(stdout, "Header Response: \n%s", header);
+	fprintf(stdout, "\nHeader Response: \n%s\n", header);
 	fflush(stdout);
 	// Send data back to client
 	send(clientFd, header, sizeof(header), 0);
@@ -417,7 +436,7 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
 	strcat(header, "Request Method: ");
 	strcat(header, methodType);
 	strcat(header, "\r\n");
-	fprintf(stdout, "Error Response: \n%s", header);
+	fprintf(stdout, "\nError Response: \n%s\n", header);
 	fflush(stdout);
 	send(clientFd, header, sizeof(header), 0);
 	makeLogFile(clientAddress, methodType, portNo, "405 Method Not Allowed", client);
@@ -546,7 +565,7 @@ char *getIPAddress(struct sockaddr_in *clientAddress)
 	// https://stackoverflow.com/questions/3060950/how-to-get-ip-address-from-sock-structure-in-c
 	// Get the ip address of a client
 	struct in_addr ipAddr = clientAddress->sin_addr;
-	char IPClientStr[INET_ADDRSTRLEN];
+	char *IPClientStr = malloc(INET_ADDRSTRLEN * sizeof(char));
 	inet_ntop(AF_INET, &ipAddr, IPClientStr, INET_ADDRSTRLEN);
 
 	return IPClientStr;
@@ -585,4 +604,12 @@ bool checkPersistence(gchar *header, char *protocol)
 	printf("____NOT persistent\n");
 	// Connection is not persistent.
 	return false;
+}
+
+void setTimeout(int fd, int secs)
+{
+	struct timeval timeout2;
+	timeout2.tv_sec = secs;
+	timeout2.tv_usec = 0;
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout2, sizeof(timeout2));
 }
