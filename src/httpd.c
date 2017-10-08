@@ -110,6 +110,7 @@ int main(int argc, char *argv[])
     bool persistence = false;
     // Connections fd's for poll()
     struct pollfd fds[200];
+    clock_t fdTimes[200];
     // Number of file descriptors
     int nfds = 1;
 
@@ -147,17 +148,17 @@ int main(int argc, char *argv[])
 
     if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
     {
-    	// IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
-    	fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
-    	close(serverFd);
-    	return -1;
+        // IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
+        fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+        close(serverFd);
+        return -1;
     }
 
     if (ioctl(serverFd, FIONBIO, (char *)&on) < 0)
     {
-    	fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
-    	close(serverFd);
-    	return -1;
+        fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
+        close(serverFd);
+        return -1;
     }
 
     // Network functions need arguments in network byte order instead
@@ -212,7 +213,6 @@ int main(int argc, char *argv[])
     {
 
         // Polling
-        printf("Polling...\n");
         int pollVal = poll(fds, nfds, -1);
 
         // Error
@@ -233,13 +233,13 @@ int main(int argc, char *argv[])
             persistence = false;
             continue;
         }
-        printf("\nNFDS: %i\n",nfds);
+        //printf("\nNFDS: %i\n", nfds);
         fflush(stdout);
         current_size = nfds;
         for (x = 0; x < current_size; x++)
         {
-            
-            printf("\nx: %i\n",nfds);
+
+            //printf("\nx: %i\n", x);
             fflush(stdout);
             if (fds[x].revents == 0)
                 continue;
@@ -254,13 +254,8 @@ int main(int argc, char *argv[])
                     // setTimeout(clientFd, 1);
                     socklen_t len = (socklen_t)sizeof(client);
 
-
-                    printf("before accept\n");
-                    fflush(stdout);
                     clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
-                    printf("after accept\n");
-                    fflush(stdout);
-                    
+
                     // Error
                     if (clientFd < 0)
                     {
@@ -270,18 +265,19 @@ int main(int argc, char *argv[])
                     }
                     fds[nfds].fd = clientFd;
                     fds[nfds].events = POLLIN;
+                    fdTimes[nfds] = clock();
                     nfds++;
                 } while (clientFd != -1);
-                
+
                 printf("\nout of do while for socket accepting\n");
                 fflush(stdout);
             }
             else
             {
-                
-                printf("\nChecking on  new client dudeson\n");
+                persistence = true;
+                //printf("\nChecking on  new client dudeson\n");
                 fflush(stdout);
-                setTimeout(fds[nfds].fd, 6);
+                setTimeout(fds[x].fd, 1);
                 do
                 {
                     memset(message, 0, sizeof(message));
@@ -291,10 +287,15 @@ int main(int argc, char *argv[])
                     // Failed to receive from socket
                     if (n == 0)
                     {
-                        printf("\nMessage is empty\n");
-                        shutdown(clientFd, SHUT_RDWR);
-                        close(clientFd);
-                        persistence = false;
+                        clock_t difference = clock() - fdTimes[x];
+                        int diffSec = difference / CLOCKS_PER_SEC;
+                        //printf("Diffsec: %i", diffSec);
+                        fflush(stdout);
+                        if (diffSec >= 30)
+                        {
+                            printf("\nTimed out\n");
+                            persistence = false;
+                        }
                         break;
                     }
                     // Handle error
@@ -304,6 +305,8 @@ int main(int argc, char *argv[])
                         persistence = false;
                         break;
                     }
+
+                    fdTimes[x] = clock();
 
                     // Add a null-terminator to the message(request from client)
                     message[n] = '\0';
@@ -339,8 +342,7 @@ int main(int argc, char *argv[])
                     gchar *data = headerDataSplit[1];
 
                     persistence = checkPersistence(headerDataSplit[0], protocol);
-
-                    doMethod(clientFd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, persistence, client);
+                    doMethod(fds[x].fd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, persistence, client);
                     g_strfreev(splitString);
                     g_strfreev(firstLine);
                 } while (true);
@@ -348,10 +350,12 @@ int main(int argc, char *argv[])
                 if (!persistence)
                 {
                     printf("!persistance");
-
+                    fflush(stdout);
+                    shutdown(fds[x].fd, SHUT_RDWR);
                     close(fds[x].fd);
                     fds[x].fd = -1;
                     fdRemoved = true;
+                    persistence = true;
                 }
             }
         }
@@ -365,10 +369,12 @@ int main(int argc, char *argv[])
                     for (j = i; j < nfds; j++)
                     {
                         fds[j].fd = fds[j + 1].fd;
+                        fdTimes[j] = fdTimes[j + 1];
                     }
                     nfds--;
                 }
             }
+            fdRemoved = false;
         }
     }
     // If unexpected failure, close the connection
