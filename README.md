@@ -15,9 +15,6 @@ GET, POST and HEAD requests are sent at `http://localhost:PORT_NUMBER`
 
 ## Description of Functions:
 
-##### void closeFpIfOpen();
-This function closes the file pointer if it is open. This function is usually called when the program encounters an error. This prevents memory leaks.
-
 ##### void doMethod(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence);
 This function compares the method value of the header. If the given value matches a supported method the matches' corresponding method is initiated. The function handles errors if a given method is not supported.
 
