@@ -36,30 +36,30 @@
     scp /home/skulipardus/Háskólinn\ í\ Reykjavík/Tölvusamskipti/Http-Server-pt1/src/httpd.c  skulia15@skel.ru.is:tsam/pa2/src/httpd.c
     Testing Post: curl -H "Content-Type: application/json" -X POST -d '{"username": "KYS", "data": "someData", "Connection" : "Connect plz"}' localhost:59442
 
-    validate args DONE
-    Find port number from args DONE
-    Connect to client DONE
-    Connect to multiple clients in parallel
-    Bind a TCP socket DONE
-    Receive message request from client DONE
-    Parse the header?
-    Check for persistence
-        if HTTP/1.0 -> not persistent
-        IF HTTP/1.1 -> persistent
-        if keep-alive != NULL -> persistent
-        FOR ALL CONNECTION 1.1 and 1.0 if Connection: closed -> NOT persistent
-    Handle connection based on persistence
-    Handle timeout, 30 sec
-    Check Operation (GET / POST/ HEAD) DONE
-    Error response if method not supported
-    Make Get done??
-    Make Post
-    Make Head
-    Send Response
-    check if client gets response
+    // validate args DONE
+    // Find port number from args DONE
+    // Connect to client DONE
+    // Connect to multiple clients in parallel
+    // Bind a TCP socket DONE
+    // Receive message request from client DONE
+    // Parse the header?
+    // Check for persistence
+    //     if HTTP/1.0 -> not persistent
+    //     IF HTTP/1.1 -> persistent
+    //     if keep-alive != NULL -> persistent
+    //     FOR ALL CONNECTION 1.1 and 1.0 if Connection: closed -> NOT persistent
+    // Handle connection based on persistence
+    // Handle timeout, 30 sec
+    // Check Operation (GET / POST/ HEAD) DONE
+    // Error response if method not supported
+    // Make Get done??
+    // Make Post
+    // Make Head
+    // Send Response
+    // check if client gets response
     Free Memory
     Make sure consistent formatting
-    Close the connection
+    //Close the connection
     FIX ALL WARNINGS
     FIX ALL MEMORY LEAKS
     CHECK IF MAKEFILE IS CORRECT - Compiles w/o warnings with flags given in description
@@ -77,11 +77,11 @@
 */
 /* Function definitions go here */
 void doMethod(int clientFd, gchar *methodType, gchar *protocol,
-              struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client);
-void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client);
-void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client);
-void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client);
-void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persistence);
+              struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, struct sockaddr_in client);
+void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, struct sockaddr_in client);
+void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, struct sockaddr_in client);
+void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, struct sockaddr_in client);
+void makeHeader(gchar *protocol, char *header, size_t contentLen);
 void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char *html, gchar *data, struct sockaddr_in client);
 void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char *portNo, char *statusCode, struct sockaddr_in client);
 char *getIPAddress(struct sockaddr_in *clientAddress);
@@ -89,7 +89,6 @@ char *getTime();
 size_t my_strftime(char *s, size_t max, const char *fmt, const struct tm *tm);
 bool checkPersistence(gchar *header, char *protocol);
 void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct sockaddr_in *clientAddress, char *portNo, struct sockaddr_in client);
-void setTimeout(int fd, int secs);
 
 int main(int argc, char *argv[])
 {
@@ -110,20 +109,18 @@ int main(int argc, char *argv[])
     bool persistence = false;
     // Connections fd's for poll()
     struct pollfd fds[200];
-    clock_t fdTimes[200];
+    // Timer for each connection, to see whether they have timed out
+    time_t fdTimes[200];
     // Number of file descriptors
     int nfds = 1;
 
+    // For use in loops
     int current_size = 0;
     int i, j, x;
 
+    // Checks whether a connection has been closed, so we can optimize the array
     bool fdRemoved = false;
 
-    // Set timeout for 30 seconds
-    //int timeout = 6 * 1000;
-
-    // Initialize timeout
-    //https://stackoverflow.com/questions/4181784/how-to-set-socket-timeout-in-c-when-making-multiple-connections
 
     // Get the port number given in arguments
     // The number of arguments should be 1 or more
@@ -146,14 +143,16 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    // Make the server file descriptor reusable
+    // https://www.ibm.com/support/knowledgecenter/ssw_ibm_i_71/rzab6/poll.htm
     if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
     {
-        // IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
         fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
         close(serverFd);
         return -1;
     }
 
+    // Make the server nonblocking
     if (ioctl(serverFd, FIONBIO, (char *)&on) < 0)
     {
         fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
@@ -176,22 +175,8 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    /*
-    struct timeval timeout;
-    Set timeout for 30 seconds
 
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
-    if (setsockopt(serverFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0)
-    {
-        // IBM: setsockopt(listen_sd, SOL_SOCKET,  SO_REUSEADDR, (char *)&on, sizeof(on));
-        fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
-        close(serverFd);
-        return -1;
-    } 
-    */
-
-    // Listen for connections, max 128 connections (128 because it's good practice?)
+    // Listen for connections, max 32 connections
     // For only 1 connection at a time use 1
     // Mark socket as accepting connections, max 1 in listen queue
     if (listen(serverFd, 32) < 0)
@@ -208,11 +193,13 @@ int main(int argc, char *argv[])
     fds[0].fd = serverFd;
     fds[0].events = POLLIN;
 
-    int timeout = 3*1000;
+    // Set the timeout on poll() as 0, so it can constantlycheck for new incoming connections, 
+    // as well as check for timeouts or new requests on old connections, without having to 
+    // wait a long time for poll() to finish
+    int timeout = 0;
     // Main loop
     for (;;)
     {
-
         // Polling
         int pollVal = poll(fds, nfds, timeout);
 
@@ -224,35 +211,23 @@ int main(int argc, char *argv[])
             break;
         }
 
-        // Timeout
-        // if (pollVal == 0)
-        // {
-        //     printf("Connection timed out\n");
-        //     printf("Closing connection\n");
-        //     //shutdown(clientFd, SHUT_RDWR);
-        //     //close(clientFd);
-        //     persistence = false;
-        //     continue;
-        // }
-        //printf("\nNFDS: %i\n", nfds);
-        fflush(stdout);
+        // Loop through all connected fds.
+        // First loop will only contain the server.
+        // First iteration of loop is always for the server.
         current_size = nfds;
         for (x = 0; x < current_size; x++)
         {
-
-            //printf("\nx: %i\n", x);
-            fflush(stdout);
-            if (fds[x].revents != POLLIN)
+            if (fds[x].revents != POLLIN && fds[x].revents != 0)
+            {
                 continue;
+            }
 
             if (fds[x].fd == serverFd)
             {
+                // For the server, accept all incoming connections and add them to the array.
                 printf("  Listening socket is readable\n");
                 do
                 {
-                    printf("Trying to accept\n");
-                    fflush(stdout);
-                    // setTimeout(clientFd, 1);
                     socklen_t len = (socklen_t)sizeof(client);
 
                     clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
@@ -260,24 +235,25 @@ int main(int argc, char *argv[])
                     // Error
                     if (clientFd < 0)
                     {
-                        //110 is error for timeout
-                        printf("Failed to accept connection. %s\n", strerror(errno));
+                        // No more connections to be accepted
                         break;
                     }
                     fds[nfds].fd = clientFd;
                     fds[nfds].events = POLLIN;
-                    fdTimes[nfds] = clock();
+                    time(&fdTimes[nfds]);
                     nfds++;
                 } while (clientFd != -1);
 
-                printf("\nout of do while for socket accepting\n");
-                fflush(stdout);
             }
             else
             {
-                //printf("\nChecking on  new client dudeson\n");
-                fflush(stdout);
-                setTimeout(fds[x].fd, 1);
+                // Check whether client has made a new request, and handle appropriately.
+                // If not, check whether client has timed out
+                persistence = true;
+                struct timeval timeout;
+                timeout.tv_sec = 1;
+                timeout.tv_usec = 0;
+                setsockopt(fds[x].fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
                 do
                 {
                     memset(message, 0, sizeof(message));
@@ -287,31 +263,22 @@ int main(int argc, char *argv[])
                     // Failed to receive from socket
                     if (n <= 0)
                     {
-                        clock_t difference = clock() - fdTimes[x];
-                        int diffSec = difference / CLOCKS_PER_SEC;
-                        //printf("Diffsec: %i", diffSec);
-                        fflush(stdout);
-                        if (diffSec >= 30)
+                        time_t now;
+                        time(&now);
+                        double difference = difftime(now, fdTimes[x]);
+                        if (difference >= 30)
                         {
-                            printf("\nTimed out\n");
+                            // Timed out
                             persistence = false;
                         }
                         break;
                     }
-                    // Handle error
-                    // if (n < 0)
-                    // {
-                    //     printf("Failed to receive from client: %s", strerror(errno));
-                    //     persistence = false;
-                    //     break;
-                    // }
 
-                    fdTimes[x] = clock();
+                    // If we received a request, reset timer and handle the message
+                    time(&fdTimes[x]);
 
                     // Add a null-terminator to the message(request from client)
                     message[n] = '\0';
-                    //
-                    fprintf(stdout, "*****Request from client:***\n%s*************\n", message);
 
                     // Count the number of lines in the stringg_str
                     // https://stackoverflow.com/questions/9052490/find-the-count-of-substring-in-string
@@ -325,12 +292,10 @@ int main(int argc, char *argv[])
                     }
 
                     // Split the string by newline and put them in an array
-                    fflush(stdout);
                     gchar **splitString = g_strsplit(message, "\r\n", countLines);
-                    fflush(stdout);
                     gchar **firstLine = g_strsplit(splitString[0], " ", sizeof(splitString[0]));
+
                     // Find the method type (GET/POST/HEAD)
-                    fflush(stdout);
                     gchar *methodType = firstLine[0];
                     // Find the requested page in the request
                     gchar *page = firstLine[1];
@@ -338,19 +303,20 @@ int main(int argc, char *argv[])
                     gchar *protocol = firstLine[2];
 
                     // Data is found in request when we have seen 2 "\r\n" in a row.
+                    // Empty unless it's a post request
                     gchar **headerDataSplit = g_strsplit(message, "\r\n\r\n", countLines);
                     gchar *data = headerDataSplit[1];
 
+
                     persistence = checkPersistence(headerDataSplit[0], protocol);
-                    doMethod(fds[x].fd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, persistence, client);
+                    doMethod(fds[x].fd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, client);
                     g_strfreev(splitString);
                     g_strfreev(firstLine);
                 } while (true);
 
+                // If the connection was not keep-alive, or the connection timed out
                 if (!persistence)
                 {
-                    printf("!persistance\n");
-                    fflush(stdout);
                     shutdown(fds[x].fd, SHUT_RDWR);
                     close(fds[x].fd);
                     fds[x].fd = -1;
@@ -360,7 +326,7 @@ int main(int argc, char *argv[])
         }
         if (fdRemoved)
         {
-            printf("optimizing array");
+            // Optimize the array
             for (i = 0; i < nfds; i++)
             {
                 if (fds[i].fd == -1)
@@ -390,32 +356,32 @@ int main(int argc, char *argv[])
 // Compares the method value of the header, if the given value matches a supported method the matched method is initiated.
 // Handles error if given method is not supported
 void doMethod(int clientFd, gchar *methodType, gchar *protocol,
-              struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client)
+              struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, struct sockaddr_in client)
 {
     // Do method depending on the mode
     if (g_strcmp0(methodType, "GET") == 0)
     {
         // Do get
-        doGet(clientFd, protocol, clientAddress, page, portNo, persistence, client);
+        doGet(clientFd, protocol, clientAddress, page, portNo, client);
     }
     else if (g_strcmp0(methodType, "POST") == 0)
     {
         // Do Post
-        doPost(clientFd, protocol, clientAddress, page, portNo, data, persistence, client);
+        doPost(clientFd, protocol, clientAddress, page, portNo, data, client);
     }
     else if (g_strcmp0(methodType, "HEAD") == 0)
     {
         // Do Head
-        doHead(clientFd, protocol, clientAddress, page, portNo, persistence, client);
+        doHead(clientFd, protocol, clientAddress, page, portNo, client);
     }
     else
     {
+        // If we receive an unsupported request type, return an error
         handleUnsupported(clientFd, methodType, protocol, clientAddress, portNo, client);
     }
 }
 
-// Description of function
-void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client)
+void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, struct sockaddr_in client)
 {
     // The HTML for the page
     char html[DATA_SIZE];
@@ -423,7 +389,7 @@ void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gch
 
     // Create the header
     char header[HEADER_SIZE];
-    makeHeader(protocol, header, strlen(html), persistence);
+    makeHeader(protocol, header, strlen(html));
 
     char response[MESSAGE_SIZE];
     memset(response, 0, sizeof(response));
@@ -438,7 +404,7 @@ void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gch
     makeLogFile(clientAddress, "GET", portNo, "200 OK", client);
 }
 
-void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, bool persistence, struct sockaddr_in client)
+void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, struct sockaddr_in client)
 {
     // The HTML for the page
     char html[DATA_SIZE];
@@ -446,7 +412,7 @@ void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gc
 
     // Create the header
     char header[HEADER_SIZE];
-    makeHeader(protocol, header, strlen(html), persistence);
+    makeHeader(protocol, header, strlen(html));
 
     char response[MESSAGE_SIZE];
     memset(response, 0, sizeof(response));
@@ -461,13 +427,13 @@ void doPost(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gc
     makeLogFile(clientAddress, "POST", portNo, "200 OK", client);
 }
 
-void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, bool persistence, struct sockaddr_in client)
+void doHead(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, struct sockaddr_in client)
 {
     char html[DATA_SIZE];
     makeBody(clientAddress, page, portNo, html, NULL, client);
     // Create the header
     char header[HEADER_SIZE];
-    makeHeader(protocol, header, strlen(html), persistence);
+    makeHeader(protocol, header, strlen(html));
 
     fprintf(stdout, "\nHeader Response: \n%s\n", header);
     fflush(stdout);
@@ -499,7 +465,7 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
 }
 
 // Creates the header
-void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persistence)
+void makeHeader(gchar *protocol, char *header, size_t contentLen)
 {
     char *timeStamp = getTime();
 
@@ -520,15 +486,6 @@ void makeHeader(gchar *protocol, char *header, size_t contentLen, bool persisten
     strcat(header, contentLenStr);
     strcat(header, "\r\n");
     strcat(header, "Content-Type: text/html\n");
-    //strcat(header, "Connection: ");
-    // if (persistence)
-    // {
-    //     strcat(header, "keep-alive\r\n");
-    // }
-    // else
-    // {
-    //     strcat(header, "close\r\n");
-    // }
 
     // Do indicate that the header field is done
     strcat(header, "\r\n");
@@ -658,12 +615,4 @@ bool checkPersistence(gchar *header, char *protocol)
     printf("____NOT persistent\n");
     // Connection is not persistent.
     return false;
-}
-
-void setTimeout(int fd, int secs)
-{
-    struct timeval timeout2;
-    timeout2.tv_sec = secs;
-    timeout2.tv_usec = 0;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout2, sizeof(timeout2));
 }
