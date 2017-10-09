@@ -5,7 +5,7 @@
 #### Axel Björnsson <axelb15@ru.is>
 
 ## Overview:
-A Hypertext Transfer Protocol server that allows 
+A Hypertext Transfer Protocol server that allows multiple clients to connect with 30 second persistant connection.
 
 Compile with:  `make -C ./src`
 
