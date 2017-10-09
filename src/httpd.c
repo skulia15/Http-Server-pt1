@@ -23,59 +23,7 @@
 #define HOST_URL "http://localhost"
 #define DATE_TIME_SIZE 64
 
-// TODO
-/* PSEUDOCODE PLANNING
-    Our port is: 59442
-    RFC for Http 1.1: https://tools.ietf.org/html/rfc2616
-    ssh tunnel: ssh -L 59442:127.0.0.1:59442 skulia15@skel.ru.is
-    Poll() info from: https://www.ibm.com/support/knowledgecenter/ssw_ibm_i_71/rzab6/poll.htm
 
-    Start server with: ./httpd 59442
-    Test server in seperate teminal with command: curl -X (GET/POST/HEAD) localhost:59442
-    Test with data: curl -H "Content-Type: application/json" -X POST -d '{"username": "KYS"}' localhost:59442
-    scp /home/skulipardus/Háskólinn\ í\ Reykjavík/Tölvusamskipti/Http-Server-pt1/src/httpd.c  skulia15@skel.ru.is:tsam/pa2/src/httpd.c
-    Testing Post: curl -H "Content-Type: application/json" -X POST -d '{"username": "KYS", "data": "someData", "Connection" : "Connect plz"}' localhost:59442
-
-    // validate args DONE
-    // Find port number from args DONE
-    // Connect to client DONE
-    // Connect to multiple clients in parallel
-    // Bind a TCP socket DONE
-    // Receive message request from client DONE
-    // Parse the header?
-    // Check for persistence
-    //     if HTTP/1.0 -> not persistent
-    //     IF HTTP/1.1 -> persistent
-    //     if keep-alive != NULL -> persistent
-    //     FOR ALL CONNECTION 1.1 and 1.0 if Connection: closed -> NOT persistent
-    // Handle connection based on persistence
-    // Handle timeout, 30 sec
-    // Check Operation (GET / POST/ HEAD) DONE
-    // Error response if method not supported
-    // Make Get done??
-    // Make Post
-    // Make Head
-    // Send Response
-    // check if client gets response
-    Free Memory
-    Make sure consistent formatting
-    //Close the connection
-    FIX ALL WARNINGS
-    FIX ALL MEMORY LEAKS
-    CHECK IF MAKEFILE IS CORRECT - Compiles w/o warnings with flags given in description
-    Comment all functions
-    Readme should give directions on how to test the program
-    (3 points) Make sure that your implementation does not crash, that memory is managed
-    correctly, and does not contain any obvious security issues. Try to keep track of what comes
-    from the clients, which may be malicious, and deallocate what you do not need early. Zero
-    out every buffer before use, or allocate the buffer using g_new0().
-
-    HTML CHANGE PORT 
-    
-
-
-*/
-/* Function definitions go here */
 void doMethod(int clientFd, gchar *methodType, gchar *protocol,
               struct sockaddr_in *clientAddress, gchar *page, char *portNo, gchar *data, struct sockaddr_in client);
 void doGet(int clientFd, gchar *protocol, struct sockaddr_in *clientAddress, gchar *page, char *portNo, struct sockaddr_in client);
@@ -92,27 +40,30 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
 
 int main(int argc, char *argv[])
 {
-    int on = 1;
     // The request sent by the client
     char message[MESSAGE_SIZE];
     // The file descriptor for the server
     int serverFd;
-    // The file descriptor for the client
+    // The file descriptor for the current client
     int clientFd = -1;
     // The port number as an integer, given from command line
     int portNo;
     // The port number as a string, given from command line
     char *portNoString;
     // Structures for handling internet addresses
-    struct sockaddr_in server, client;
+    struct sockaddr_in server;
     // Flag for persistence of the connection, false by default
     bool persistence = false;
     // Connections fd's for poll()
     struct pollfd fds[200];
+    // The port and ip for each connection
+    struct sockaddr_in clients[200];
     // Timer for each connection, to see whether they have timed out
     time_t fdTimes[200];
     // Number of file descriptors
     int nfds = 1;
+
+    int on = 1;
 
     // For use in loops
     int current_size = 0;
@@ -120,7 +71,6 @@ int main(int argc, char *argv[])
 
     // Checks whether a connection has been closed, so we can optimize the array
     bool fdRemoved = false;
-
 
     // Get the port number given in arguments
     // The number of arguments should be 1 or more
@@ -175,7 +125,6 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-
     // Listen for connections, max 32 connections
     // For only 1 connection at a time use 1
     // Mark socket as accepting connections, max 1 in listen queue
@@ -193,8 +142,8 @@ int main(int argc, char *argv[])
     fds[0].fd = serverFd;
     fds[0].events = POLLIN;
 
-    // Set the timeout on poll() as 0, so it can constantlycheck for new incoming connections, 
-    // as well as check for timeouts or new requests on old connections, without having to 
+    // Set the timeout on poll() as 0, so it can constantlycheck for new incoming connections,
+    // as well as check for timeouts or new requests on old connections, without having to
     // wait a long time for poll() to finish
     int timeout = 0;
     // Main loop
@@ -225,12 +174,11 @@ int main(int argc, char *argv[])
             if (fds[x].fd == serverFd)
             {
                 // For the server, accept all incoming connections and add them to the array.
-                printf("  Listening socket is readable\n");
                 do
                 {
-                    socklen_t len = (socklen_t)sizeof(client);
+                    socklen_t len = (socklen_t)sizeof(clients[nfds]);
 
-                    clientFd = accept(serverFd, (struct sockaddr *)&client, &len);
+                    clientFd = accept(serverFd, (struct sockaddr *)&clients[nfds], &len);
 
                     // Error
                     if (clientFd < 0)
@@ -243,7 +191,6 @@ int main(int argc, char *argv[])
                     time(&fdTimes[nfds]);
                     nfds++;
                 } while (clientFd != -1);
-
             }
             else
             {
@@ -307,11 +254,11 @@ int main(int argc, char *argv[])
                     gchar **headerDataSplit = g_strsplit(message, "\r\n\r\n", countLines);
                     gchar *data = headerDataSplit[1];
 
-
                     persistence = checkPersistence(headerDataSplit[0], protocol);
-                    doMethod(fds[x].fd, methodType, protocol, (struct sockaddr_in *)&client, page, portNoString, data, client);
+                    doMethod(fds[x].fd, methodType, protocol, (struct sockaddr_in *)&clients[x], page, portNoString, data, clients[x]);
                     g_strfreev(splitString);
                     g_strfreev(firstLine);
+                    g_strfreev(headerDataSplit);
                 } while (true);
 
                 // If the connection was not keep-alive, or the connection timed out
@@ -335,6 +282,7 @@ int main(int argc, char *argv[])
                     {
                         fds[j].fd = fds[j + 1].fd;
                         fdTimes[j] = fdTimes[j + 1];
+                        clients[j] = clients[j + 1];
                     }
                     nfds--;
                 }
@@ -344,11 +292,13 @@ int main(int argc, char *argv[])
     }
     // If unexpected failure, close the connection
     printf("Server encountered an error, Shutting Down\n");
-    shutdown(clientFd, SHUT_RDWR);
     for (i = 0; i < nfds; i++)
     {
         if (fds[i].fd >= 0)
+        {
+            shutdown(fds[i].fd, SHUT_RDWR);
             close(fds[i].fd);
+        }
     }
     return 0;
 }
@@ -514,6 +464,7 @@ void makeBody(struct sockaddr_in *clientAddress, gchar *page, char *portNo, char
     strcat(content, ":");
     char *clientPort = g_strdup_printf("%i", client.sin_port);
     strcat(content, clientPort);
+    free(clientIP);
     g_free(clientPort);
 
     // Add content to HTML
@@ -568,6 +519,7 @@ void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char *por
     // Close the log file
     fclose(logFile);
     free(timeStamp);
+    free(clientIP);
 }
 
 // Returns the IP address of the client issuing a request.
@@ -585,14 +537,13 @@ char *getIPAddress(struct sockaddr_in *clientAddress)
 // Returns a string with the current date and time.
 char *getTime()
 {
-    // https://stackoverflow.com/questions/1442116/how-to-get-date-and-time-value-in-c-program/30759067#30759067
+    // https://stackoverflow.com/a/7411339
     // Configure time to the current time
-    time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
+    time_t now = time(0);
+    struct tm *tm = gmtime(&now);
     char *timeStamp = malloc(DATE_TIME_SIZE * sizeof(char));
     //DEALLOCATE
-    strftime(timeStamp, DATE_TIME_SIZE, "%c", tm);
-    //printf("*_*_*_*__*\n%s\n", timeStamp);
+    strftime(timeStamp, DATE_TIME_SIZE, "%Y-%m-%d %H:%M:%S", tm);
     return timeStamp;
 }
 
@@ -603,16 +554,13 @@ bool checkPersistence(gchar *header, char *protocol)
     //Protocol is of type HTTP/1.1, persistent by default
     if (g_strcmp0(protocol, "HTTP/1.1") == 0 && strstr(header, "Connection: closed") == NULL)
     {
-        printf("____Persistent Cause HTTP/1.1\n");
         return true;
     }
     // Check if request specifies persistent connection
     if (strstr(header, "Connection: keep-alive") != NULL)
     {
-        printf("____Persistent Cause Connection Keep alive\n");
         return true;
     }
-    printf("____NOT persistent\n");
     // Connection is not persistent.
     return false;
 }
