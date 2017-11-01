@@ -40,6 +40,12 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
 
 int main(int argc, char *argv[])
 {
+
+    // TODO: Update status codes,
+    // Remove setsockopt. Fix everything that messes up persistence and multiple connections
+    // Include Keep alive in header fields
+    // Move logfile out of ./src, in the implementation - not simply moving the file
+
     // The request sent by the client
     char message[MESSAGE_SIZE];
     // The file descriptor for the server
@@ -95,6 +101,8 @@ int main(int argc, char *argv[])
 
     // Make the server file descriptor reusable
     // https://www.ibm.com/support/knowledgecenter/ssw_ibm_i_71/rzab6/poll.htm
+
+    // Remove this from here until ---->
     if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0)
     {
         fprintf(stdout, "setsockopt failed. %s\n", strerror(errno));
@@ -109,6 +117,7 @@ int main(int argc, char *argv[])
         close(serverFd);
         return -1;
     }
+    // <-----here
 
     // Network functions need arguments in network byte order instead
     // of host byte order. The macros htonl, htons convert the
@@ -166,6 +175,7 @@ int main(int argc, char *argv[])
         current_size = nfds;
         for (x = 0; x < current_size; x++)
         {
+            //REMOVE this - encapsulate if and else? block
             if (fds[x].revents != POLLIN && fds[x].revents != 0)
             {
                 continue;
@@ -200,6 +210,7 @@ int main(int argc, char *argv[])
                 struct timeval timeout;
                 timeout.tv_sec = 1;
                 timeout.tv_usec = 0;
+                // REMOVE this and the above timeout
                 setsockopt(fds[x].fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
                 do
                 {
@@ -409,7 +420,8 @@ void handleUnsupported(int clientFd, gchar *methodType, gchar *protocol, struct 
     fprintf(stdout, "\nError Response: \n%s\n", header);
     fflush(stdout);
     send(clientFd, header, strlen(header), 0);
-    makeLogFile(clientAddress, methodType, portNo, "405 Method Not Allowed", client);
+    // Return only status code or message with it???
+    makeLogFile(clientAddress, methodType, portNo, "501 Not Implemented", client);
     //Hotfix for client not disconnection when error
     close(clientFd);
 }
@@ -436,6 +448,8 @@ void makeHeader(gchar *protocol, char *header, size_t contentLen)
     strcat(header, contentLenStr);
     strcat(header, "\r\n");
     strcat(header, "Content-Type: text/html\n");
+
+    // TODO: Include keep-alive!
 
     // Do indicate that the header field is done
     strcat(header, "\r\n");
@@ -487,6 +501,8 @@ void makeLogFile(struct sockaddr_in *clientAddress, gchar *methodType, char *por
     char *clientIP = getIPAddress(clientAddress);
 
     // Logger
+
+    // TODO: Open logfile outside of ./src! 
     logFile = fopen("httpd.log", "a");
     if (logFile == NULL)
     {
